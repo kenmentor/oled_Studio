@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveKit Audio & Debug Console</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; font-family: monospace; }
+    body { background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 15px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    input { background: #0f172a; border: 1px solid #475569; color: #fff; padding: 8px 12px; border-radius: 4px; width: 100%; }
+    button { background: #2563eb; color: #fff; border: none; padding: 10px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    button:hover { background: #1d4ed8; }
+    button.disconnect { background: #dc2626; }
+    button.disconnect:hover { background: #b91c1c; }
+    #status { font-weight: bold; display: inline-block; padding: 4px 8px; border-radius: 4px; background: #334155; }
+    .connected { background: #166534 !important; color: #4ade80; }
+    .disconnected { background: #991b1b !important; color: #fca5a5; }
+    #logs { background: #020617; border: 1px solid #1e293b; height: 350px; overflow-y: auto; padding: 10px; border-radius: 4px; font-size: 13px; white-space: pre-wrap; }
+    .log-info { color: #38bdf8; }
+    .log-track { color: #facc15; }
+    .log-error { color: #f87171; }
+    .log-event { color: #4ade80; }
+    #audio-container { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>LiveKit Real-time Debugger</h2>
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label>LiveKit WS URL</label>
+        <input type="text" id="ws-url" placeholder="wss://your-domain.livekit.cloud or ws://localhost:7880">
+      </div>
+      <div>
+        <label>Participant Token</label>
+        <input type="text" id="token" placeholder="eyJhbGciOi...">
+      </div>
+    </div>
+    <div style="margin-top: 15px; display: flex; gap: 10px; align-items: center;">
+      <button id="btn-connect" onclick="connect()">Connect & Listen</button>
+      <button id="btn-disconnect" class="disconnect" onclick="disconnect()" disabled>Disconnect</button>
+      <span>Status: <span id="status" class="disconnected">DISCONNECTED</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Live Event Logs</h3>
+    <div id="logs"></div>
+  </div>
+</div>
+
+<div id="audio-container"></div>
+
+<script>
+  let room = null;
+
+  function log(msg, type = 'info') {
+    const logsDiv = document.getElementById('logs');
+    const entry = document.createElement('div');
+    const time = new Date().toISOString().split('T')[1].slice(0, 8);
+    entry.className = `log-${type}`;
+    entry.textContent = `[${time}] ${msg}`;
+    logsDiv.appendChild(entry);
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  async function connect() {
+    const url = document.getElementById('ws-url').value.trim();
+    const token = document.getElementById('token').value.trim();
+
+    if (!url || !token) {
+      alert("Please provide both WS URL and Token.");
+      return;
+    }
+
+    try {
+      log("Initializing LiveKit Room...", "info");
+      room = new LivekitClient.Room({
+        adaptiveStream: true,
+        dynacast: true,
+      });
+
+      // Track subscriptions (Audio/Video incoming)
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        log(`Track Subscribed: ${track.kind} from ${participant.identity}`, "track");
+        if (track.kind === LivekitClient.Track.Kind.Audio) {
+          const audioElement = track.attach();
+          document.getElementById('audio-container').appendChild(audioElement);
+          log(`Attached audio element for participant: ${participant.identity}`, "event");
+        }
+      });
+
+      room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+        log(`Track Unsubscribed: ${track.kind} from ${participant.identity}`, "track");
+        track.detach().forEach(element => element.remove());
+      });
+
+      // Participant events
+      room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+        log(`Participant Joined: ${participant.identity}`, "event");
+      });
+
+      room.on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+        log(`Participant Left: ${participant.identity}`, "event");
+      });
+
+      // Data packets (Agent state / JSON payloads)
+      room.on(LivekitClient.RoomEvent.DataReceived, (payload, participant) => {
+        const str = new TextDecoder().decode(payload);
+        log(`Data Received from ${participant?.identity || 'Server'}: ${str}`, "event");
+      });
+
+      // Connection lifecycle
+      room.on(LivekitClient.RoomEvent.Disconnected, () => {
+        log("Disconnected from room", "error");
+        updateUI(false);
+      });
+
+      log(`Connecting to ${url}...`, "info");
+      await room.connect(url, token);
+      
+      log(`Connected to room: ${room.name}`, "event");
+      updateUI(true);
+
+      // Handle audio context unlock policies
+      await room.startAudio();
+      log("Audio context active", "info");
+
+    } catch (err) {
+      log(`Connection Error: ${err.message}`, "error");
+      updateUI(false);
+    }
+  }
+
+  async function disconnect() {
+    if (room) {
+      await room.disconnect();
+      room = null;
+    }
+    updateUI(false);
+  }
+
+  function updateUI(isConnected) {
+    const status = document.getElementById('status');
+    const btnConnect = document.getElementById('btn-connect');
+    const btnDisconnect = document.getElementById('btn-disconnect');
+
+    if (isConnected) {
+      status.textContent = "CONNECTED";
+      status.className = "connected";
+      btnConnect.disabled = true;
+      btnDisconnect.disabled = false;
+    } else {
+      status.textContent = "DISCONNECTED";
+      status.className = "disconnected";
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+    }
+  }
+</script>
+</body>
+</html>
