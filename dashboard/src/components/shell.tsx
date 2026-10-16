@@ -13,7 +13,6 @@ import {
   IconKeys,
   IconOverview,
   IconSettings,
-  IconShield,
   IconSignOut,
   IconStudio,
   IconUsage,
@@ -40,7 +39,6 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { href: "/keys", label: "API keys", icon: IconKeys },
       { href: "/usage", label: "Usage", icon: IconUsage },
       { href: "/billing", label: "Billing", icon: IconBilling },
-      { href: "/admin", label: "Admin", icon: IconShield },
       { href: "/settings", label: "Settings", icon: IconSettings },
     ],
   },
@@ -157,35 +155,9 @@ export default function Shell({ children }: { children: ReactNode }) {
   const { account, ready, signIn, signOut, createKey } = useAccount();
   const pathname = usePathname();
   const router = useRouter();
-  // Admin stays invisible: the nav item only appears for ADMIN_EMAILS
-  // accounts (one quiet probe per login). Everyone else gets in, if they
-  // know, via Ctrl+Alt+F — an unlikely combo nobody hits by accident.
-  const [showAdmin, setShowAdmin] = useState(false);
-
-  useEffect(() => {
-    if (!ready || !account) {
-      setShowAdmin(false);
-      return;
-    }
-    let cancelled = false;
-    void gateway.adminOverview().then((r) => {
-      if (!cancelled) setShowAdmin(r.ok);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, account]);
-
-  useEffect(() => {
-    const onKeys = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.altKey && (e.key === "f" || e.key === "F")) {
-        e.preventDefault();
-        router.push("/admin");
-      }
-    };
-    window.addEventListener("keydown", onKeys);
-    return () => window.removeEventListener("keydown", onKeys);
-  }, [router]);
+  // Admin lives outside this shell entirely (own /admin area, no nav
+  // entry, no shortcut): user pages never reference it.
+  const groups = GROUPS;
 
   useEffect(() => {
     if (!ready || account) return;
@@ -225,12 +197,6 @@ export default function Shell({ children }: { children: ReactNode }) {
     window.addEventListener("oled-auth-expired", onExpired);
     return () => window.removeEventListener("oled-auth-expired", onExpired);
   }, [account, router, signOut]);
-
-  // The /admin entry only exists for admins — everyone else never sees it.
-  const groups = GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter((it) => it.href !== "/admin" || showAdmin),
-  }));
 
   // Live credits; null while offline so local quota math covers the gap.
   const live = useServerBalance(account?.uid ?? "");

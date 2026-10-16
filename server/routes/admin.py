@@ -12,7 +12,8 @@ per-user endpoints. If it's not in this payload, it isn't tracked.
 Shape (all wallet-scoped reads happen here, nowhere else):
   users    total, new_7d, dormant (0 renders), liability_chars (owed),
            top[{email,renders,chars,paid}], recent[...]
-  logins   total, last_7d, series_14d[{day,count}], recent[...]
+  logins   total, last_7d, series_14d[{day,count}], by_method{method:count},
+           recent[{email,method,at}]
   visits   total, last_7d, series_14d, by_path[{path,count}]
   renders  total, chars_total, chars_7d, audio_hours, previews,
            quality{done,errors,error_rate,avg_chars,avg_latency_ms},
@@ -114,6 +115,10 @@ async def overview(request: Request, users=Depends(get_users)):
 
     # ---- logins (session starts, by method) ----
     login_rows = activity.recent_logins(limit=200)
+    by_method: dict[str, int] = {}
+    for r in login_rows:
+        m = r.get("method", "") or "unknown"
+        by_method[m] = by_method.get(m, 0) + 1
     recent_logins = []
     for r in login_rows[:8]:
         u = email_of.get(r.get("uid", ""), {})
@@ -267,6 +272,7 @@ async def overview(request: Request, users=Depends(get_users)):
             "total": activity.count("login"),
             "last_7d": logins_7d,
             "series_14d": login_series,
+            "by_method": by_method,
             "recent": recent_logins,
         },
         "visits": {
