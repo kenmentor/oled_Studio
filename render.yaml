@@ -44,6 +44,10 @@ services:
         sync: false # Atlas connection string; without it the app runs on memory stores
       - key: TTS_VOICE_STORE
         value: mongo # memory fallback if Mongo is unreachable (data won't persist)
+      # Deployed console origin(s). CORS allow-list: when set, this REPLACES
+      # the localhost defaults, so keep the local entries for dev.
+      - key: FRONTEND_ORIGINS
+        value: https://oled-studio-1.onrender.com,http://localhost:3001,http://127.0.0.1:3001
       # Live API + local console hybrid: cross-site fetch needs
       # SameSite=None;Secure or the session cookie is never sent and every
       # /v1/users/me call 401s (overview -> kicked to signin).
