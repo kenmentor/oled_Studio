@@ -11,7 +11,11 @@ import os
 from .models import VoiceInfo
 
 DB_NAME = os.getenv("MONGO_DB", "oled_studio")
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://127.0.0.1:27017/")
+# Your Atlas-style variable wins; legacy MONGO_URL still works as fallback.
+MONGO_URL = (
+    os.getenv("MONGO_DB_URI", "").strip()
+    or os.getenv("MONGO_URL", "mongodb://127.0.0.1:27017/")
+)
 
 
 def get_collection():
