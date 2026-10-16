@@ -40,6 +40,8 @@ services:
         sync: false # sk_test_... to start; live needs PAYSTACK_ALLOW_LIVE=true
       - key: PAYSTACK_PUBLIC
         sync: false
+      - key: ADMIN_EMAILS
+        sync: false # your login email; without it /admin denies everything
       - key: MONGO_DB_URI
         sync: false # Atlas connection string; without it the app runs on memory stores
       - key: TTS_VOICE_STORE
