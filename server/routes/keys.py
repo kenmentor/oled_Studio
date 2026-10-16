@@ -18,6 +18,11 @@ def get_keys(request: Request) -> KeyStore:
 
 @router.post("/v1/keys", response_model=ApiKeyIssued, status_code=201)
 def issue_key(body: ApiKeyCreate, request: Request, keys: KeyStore = Depends(get_keys)):
+    # Blank-after-strip names ("", "   ") are rejected: every secret must
+    # carry a human label, or key lists become unauditable. Checked before
+    # auth so the rule holds in open and locked modes alike.
+    if not body.name.strip():
+        raise api_error(400, "invalid_name", "key name must not be empty")
     suid = session_uid(request)
     if not suid and login_required():
         raise api_error(401, "login_required", "sign in with GitHub first")

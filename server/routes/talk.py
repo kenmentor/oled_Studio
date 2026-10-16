@@ -93,6 +93,15 @@ async def talk(ws: WebSocket):
                 info = None
             if info is not None:
                 owner, kid, kname = info.owner_id or PERSONA_ID, info.id, info.name
+            else:
+                # Forged secret on an otherwise open lane: fail closed like
+                # the HTTP lanes (absent key = persona demo, bogus key = out).
+                await ws.send_json(
+                    {"type": "error", "request_id": rid, "code": "invalid_key",
+                     "message": "unknown API key — check the secret or issue a new one"}
+                )
+                await ws.close()
+                return
         users.ensure_persona()
         chars = len(text)
         # Free preview lane (docs/demo): same streaming, zero debit.

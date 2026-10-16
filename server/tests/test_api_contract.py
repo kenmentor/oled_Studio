@@ -299,7 +299,37 @@ def test_key_inference_attributes_owner():
         json={"text": "keyed hello", "voice_id": "ada"},
         headers={"Authorization": f"Bearer {issued['secret']}"},
     )
-    # revoked key is unattributed now, but persona still pays when auth is off
+    # revoked key verifies against nothing now: fail closed (401), even
+    # though the open demo lane still serves keyless requests.
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "invalid_key"
+
+
+def test_key_names_and_forged_keys():
+    c = client()
+    # Blank-after-strip names are rejected, not stored as "".
+    r = c.post("/v1/keys", json={"name": "   "})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_name"
+    assert c.post("/v1/keys", json={"name": "Prod"}).status_code == 201
+
+    # Forged secret on the HTTP lane: 401 even in open (demo) mode.
+    r = c.post(
+        "/v1/speech",
+        json={"text": "forged hello", "voice_id": "ada"},
+        headers={"Authorization": "Bearer oled_sk_live_rubbishrubbishrubbish0000"},
+    )
+    assert r.status_code == 401
+    assert r.json()["error"]["code"] == "invalid_key"
+    r = c.post(
+        "/v1/speech/stream",
+        json={"text": "forged hello", "voice_id": "ada"},
+        headers={"X-API-Key": "oled_sk_live_rubbishrubbishrubbish0000"},
+    )
+    assert r.status_code == 401
+
+    # No secret at all: the shared persona demo still renders (open mode).
+    r = c.post("/v1/speech", json={"text": "demo hello", "voice_id": "ada"})
     assert r.status_code == 200
 
 

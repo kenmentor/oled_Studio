@@ -24,6 +24,7 @@ export default function KeysPage() {
   const [detail, setDetail] = useState<ApiKey | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [rotating, setRotating] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshKeys();
@@ -35,7 +36,14 @@ export default function KeysPage() {
   const usageFor = (keyName: string) => events.filter((e) => e.keyName === keyName);
 
   const create = () => {
-    const label = name.trim() || "Untitled key";
+    // Every secret needs a human label — the server 400s blanks, so stop
+    // early with a pointer instead of an "Untitled key" nobody can audit.
+    const label = name.trim();
+    if (!label) {
+      setNameError("Give the key a name first — e.g. Production, Staging, Local dev.");
+      return;
+    }
+    setNameError(null);
     void createKey(label).then(({ secret }) => {
       setIssued({ secret, label });
       setName("");
@@ -72,18 +80,21 @@ export default function KeysPage() {
 
       <Card>
         <CardHead title="Create a key" hint="shown once, never stored in plain text" />
-        <div className="flex gap-2 p-5">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && create()}
-            placeholder="Production, Staging, Local dev…"
-            aria-label="Key name"
-          />
-          <Button onClick={create}>
-            <IconPlus className="size-4" />
-            Create
-          </Button>
+        <div className="p-5">
+          <div className="flex gap-2">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && create()}
+              placeholder="Production, Staging, Local dev…"
+              aria-label="Key name"
+            />
+            <Button onClick={create} disabled={!name.trim()}>
+              <IconPlus className="size-4" />
+              Create
+            </Button>
+          </div>
+          {nameError && <p className="mt-2 text-xs text-red-400">{nameError}</p>}
         </div>
       </Card>
 

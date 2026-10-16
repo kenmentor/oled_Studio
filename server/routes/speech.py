@@ -36,7 +36,11 @@ def _keys(request):
 
 
 def _owner_for_http(request, verified) -> tuple[str, str | None, str]:
-    """(user_id, key_id, key_name). Persona by default; key owner when known."""
+    """(user_id, key_id, key_name). Persona by default; key owner when known.
+
+    Fail-closed on FORGED credentials: a secret that is present but verifies
+    against nothing is a 401, in open and locked modes alike. Only a MISSING
+    secret falls back to the shared persona demo wallet."""
     if verified is not None:
         return verified.owner_id or PERSONA_ID, verified.id, verified.name
     try:
@@ -50,6 +54,7 @@ def _owner_for_http(request, verified) -> tuple[str, str | None, str]:
             info = None
         if info is not None:
             return info.owner_id or PERSONA_ID, info.id, info.name
+        raise api_error(401, "invalid_key", "unknown API key — check the secret or issue a new one")
     return PERSONA_ID, None, ""
 
 
