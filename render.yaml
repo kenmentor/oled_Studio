@@ -44,6 +44,11 @@ services:
         sync: false # Atlas connection string; without it the app runs on memory stores
       - key: TTS_VOICE_STORE
         value: mongo # memory fallback if Mongo is unreachable (data won't persist)
+      # Live API + local console hybrid: cross-site fetch needs
+      # SameSite=None;Secure or the session cookie is never sent and every
+      # /v1/users/me call 401s (overview -> kicked to signin).
+      - key: SESSION_SAME_SITE
+        value: none
       # No deployed console yet (dashboard runs locally): logins and
       # Paystack returns land on the local dev server via browser redirects.
       - key: FRONTEND_URL

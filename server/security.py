@@ -41,7 +41,24 @@ def session_secret() -> str:
     return secret
 
 
+def session_same_site() -> str:
+    """Cookie SameSite policy. `lax` (default) is correct when frontend and
+    API are same-site (local dev, or console + API on one host).
+    Set SESSION_SAME_SITE=none for the documented hybrid (local console on
+    http://127.0.0.1:3001 talking to the https API on Render): a Lax cookie
+    is never sent on cross-site fetch, so every /v1/users/me call 401s and
+    the shell bounces back to /signin. Browsers reject SameSite=None without
+    Secure, so session_https_only() is forced True in that case."""
+    raw = os.getenv("SESSION_SAME_SITE", "lax").strip().lower()
+    if raw in ("lax", "strict", "none"):
+        return raw
+    print(f"[server] WARNING: SESSION_SAME_SITE={raw!r} unknown — falling back to lax")
+    return "lax"
+
+
 def session_https_only() -> bool:
+    if session_same_site() == "none":
+        return True  # browsers drop SameSite=None without Secure
     if os.getenv("SESSION_SECURE_COOKIE", "").lower() in ("1", "true", "yes"):
         return True
     return os.getenv("FRONTEND_URL", "").strip().lower().startswith("https://")

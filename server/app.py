@@ -179,7 +179,7 @@ def create_app(provider: SynthesisProvider | None = None) -> FastAPI:
     app.add_middleware(
         SessionMiddleware,
         secret_key=security.session_secret(),
-        same_site="lax",
+        same_site=security.session_same_site(),
         https_only=security.session_https_only(),
         # B2B hygiene: sessions die after 7 days even if logout is forgotten.
         # (Starlette default is 14; logout still kills them immediately.)
