@@ -47,6 +47,45 @@ def _redirect_uri(request: Request) -> str:
     return f"{base}/v1/auth/github/callback"
 
 
+def _allowed_origins() -> set[str]:
+    """Every console origin allowed to start/finish a login here."""
+    from ..security import cors_origins
+
+    origins = {o.strip().rstrip("/") for o in cors_origins() if o.strip()}
+    front = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    if front:
+        parsed = urllib.parse.urlparse(front)
+        if parsed.scheme and parsed.netloc:
+            origins.add(f"{parsed.scheme}://{parsed.netloc}")
+    return {o.lower() for o in origins if o}
+
+
+def _validated_return_to(value: str) -> str | None:
+    """Allow-listed absolute URL the console asked to land on after login.
+
+    Returns None for anything else (missing, relative, foreign host,
+    non-http scheme) — the caller then falls back to FRONTEND_URL.
+    This is what makes one API serve two consoles: the callback lands
+    wherever the login STARTED instead of one hardcoded env URL."""
+    try:
+        target = (value or "").strip()
+        if not target or "://" not in target:
+            return None
+        parsed = urllib.parse.urlparse(target)
+        if parsed.scheme.lower() not in ("http", "https"):
+            return None
+        origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+        if origin not in _allowed_origins():
+            print(f"[auth] return_to origin not allowed: {origin}")
+            return None
+        path = parsed.path or "/overview"
+        if not path.startswith("/"):
+            return None
+        return f"{origin}{path}"
+    except Exception:
+        return None
+
+
 def _frontend(request: Request) -> str:
     override = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
     if override:
@@ -145,11 +184,19 @@ async def _fetch_profile(token: str) -> tuple[dict, str] | None:
 
 
 @router.get("/v1/auth/github")
-def github_start(request: Request):
+def github_start(request: Request, return_to: str = ""):
     if not _cid():
         return JSONResponse({"error": {"code": "oauth_unconfigured", "message": "set GITHUB_CLIENT_ID/SECRET"}}, status_code=503)
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
+    # Where to land after the callback: wherever THIS login started
+    # (hosted console stays hosted, local stays local). Allow-listed only;
+    # anything else is dropped and FRONTEND_URL is used as fallback.
+    landing = _validated_return_to(return_to)
+    if landing:
+        request.session["post_login_to"] = landing
+    else:
+        request.session.pop("post_login_to", None)
     q = urllib.parse.urlencode({
         "client_id": _cid(),
         "redirect_uri": _redirect_uri(request),
@@ -164,6 +211,10 @@ async def github_callback(request: Request, code: str = "", state: str = ""):
     users = request.app.state.users
     base = str(request.base_url).rstrip("/")
     front = _frontend(request)
+    # Prefer the console this login started from; FRONTEND_URL is fallback.
+    # Re-validated here (never trusted blindly from the session).
+    landing = _validated_return_to(str(request.session.get("post_login_to", "") or "")) or front
+    request.session.pop("post_login_to", None)
     fail = lambda reason: RedirectResponse(f"{base}/signin?oauth_error={reason}", status_code=307)  # noqa: E731
 
     if not code:
@@ -206,7 +257,7 @@ async def github_callback(request: Request, code: str = "", state: str = ""):
         request.app.state.activity.record_login(doc["id"], "github")
     except Exception:
         pass
-    return RedirectResponse(front, status_code=307)
+    return RedirectResponse(landing, status_code=307)
 
 
 @router.post("/v1/auth/logout")

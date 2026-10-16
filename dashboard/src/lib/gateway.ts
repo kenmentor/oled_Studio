@@ -127,7 +127,10 @@ export const gateway = {
     }>(`${BASE}/v1/users/me`, { credentials: "include" }),
   logout: () =>
     fetch(`${BASE}/v1/auth/logout`, { method: "POST", credentials: "include" }).catch(() => null),
-  githubUrl: () => `${BASE}/v1/auth/github`,
+  githubUrl: (returnTo?: string) =>
+    returnTo
+      ? `${BASE}/v1/auth/github?return_to=${encodeURIComponent(returnTo)}`
+      : `${BASE}/v1/auth/github`,
   // Ask the server if funding is switched on (and test vs live mode).
   // Public info only — no secrets involved.
   paystackConfig: () =>

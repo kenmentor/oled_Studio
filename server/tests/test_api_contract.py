@@ -397,6 +397,57 @@ def test_github_oauth_flow(monkeypatch):
     assert c.post("/v1/auth/logout").json() == {"ok": True}
 
 
+def test_github_return_to_landing(monkeypatch):
+    """The console that STARTED the login is where the callback lands.
+
+    return_to is allow-listed (FRONTEND_ORIGINS + localhost defaults):
+    a foreign host falls back to FRONTEND_URL instead of open-redirecting.
+    """
+    import os
+
+    from server.routes import github_auth as _gh
+
+    os.environ["GITHUB_CLIENT_ID"] = "test-client"
+    monkeypatch.setenv("FRONTEND_ORIGINS", "https://console.example.com")
+    monkeypatch.setenv("FRONTEND_URL", "https://console.example.com")
+
+    async def fake_exchange(code, redirect_uri):
+        return "tok123"
+
+    async def fake_profile(token):
+        return ({"id": 424242, "login": "octocat", "name": "Octo", "avatar_url": ""}, "octo2@example.com")
+
+    monkeypatch.setattr(_gh, "_exchange_code", fake_exchange)
+    monkeypatch.setattr(_gh, "_fetch_profile", fake_profile)
+
+    import secrets as _secrets
+
+    monkeypatch.setattr(_secrets, "token_urlsafe", lambda n=16: "teststate")
+
+    # NOTE: FRONTEND_URL=https makes the session cookie Secure, which a plain
+    # http TestClient never sends back (bad_state). Serve the test app over
+    # https so the cookie round-trips like a real browser on Render.
+    from fastapi.testclient import TestClient
+
+    from server.app import create_app
+    from server.providers.stub import StubProvider
+
+    os.environ["TTS_VOICE_STORE"] = "memory"
+    c = TestClient(create_app(StubProvider(["ada", "chiamaka"])), base_url="https://testserver")
+    r = c.get("/v1/auth/github?return_to=https://console.example.com/overview", follow_redirects=False)
+    assert r.status_code == 307
+    r = c.get("/v1/auth/github/callback?code=code123&state=teststate", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "https://console.example.com/overview"
+
+    # evil host: dropped, falls back to FRONTEND_URL (no open redirect)
+    c.get("/v1/auth/github?return_to=https://evil.example.com/steal", follow_redirects=False)
+    r = c.get("/v1/auth/github/callback?code=code123&state=teststate", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "https://console.example.com/overview"
+    assert "evil" not in r.headers["location"]
+
+
 def test_session_login_logout():
     """Email auth mints a real session; logout destroys it; session wins."""
     c = client()
@@ -730,6 +781,17 @@ def test_admin_gating_and_overview(monkeypatch):
     assert body["revenue"]["paystack_balance_kobo"] == 123456
     assert len(body["logins"]["series_14d"]) == 14
     assert any(u["email"] == "boss@example.com" for u in body["users"]["recent"])
+    # full matrix, all admin-only: funnel, quality, series, leaders, liability
+    assert body["funnel"]["signups"] >= 1 and body["funnel"]["activated"] >= 1
+    assert body["funnel"]["visits"] >= 1
+    assert body["renders"]["quality"]["done"] >= 2
+    assert len(body["renders"]["series_14d"]) == 14
+    assert body["renders"]["series_14d"][-1]["renders"] >= 2
+    assert body["users"]["liability_chars"] >= 0
+    assert body["users"]["dormant"] >= 0
+    assert any(u["email"] == "boss@example.com" for u in body["users"]["top"])
+    assert len(body["revenue"]["series_14d"]) == 14
+    assert body["revenue"]["avg_topup_kobo"] >= 0
 
 
 def test_model_url_guessing():

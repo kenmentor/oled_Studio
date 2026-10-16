@@ -138,7 +138,9 @@ export default function SignInForm() {
           variant="outline"
           className="mt-6 w-full"
           onClick={() => {
-            window.location.href = gateway.githubUrl();
+            // Land back on THIS console after the API-side OAuth callback,
+            // so hosted logins stay hosted and local logins stay local.
+            window.location.href = gateway.githubUrl(`${window.location.origin}/overview`);
           }}
         >
           <IconGithub className="size-4" />

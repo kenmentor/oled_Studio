@@ -12,19 +12,31 @@ import { Badge, Button, Card, CardHead, SectionLabel } from "@/components/ui";
 import { Bars } from "@/components/charts";
 
 interface Overview {
-  users: { total: number; new_7d: number; recent: { name: string; email: string; created_at: string; balance_chars: number }[] };
+  users: {
+    total: number; new_7d: number; dormant: number; liability_chars: number;
+    top: { email: string; renders: number; chars: number; paid: boolean }[];
+    recent: { name: string; email: string; created_at: string; balance_chars: number }[];
+  };
   logins: { total: number; last_7d: number; series_14d: { day: string; count: number }[]; recent: { email: string; method: string; at: string }[] };
   visits: { total: number; last_7d: number; series_14d: { day: string; count: number }[]; by_path: { path: string; count: number }[] };
   renders: {
     total: number; chars_total: number; chars_7d: number; audio_hours: number;
     previews: { users: number; renders: number; chars: number };
+    quality: { done: number; errors: number; error_rate: number; avg_chars: number; avg_latency_ms: number };
+    series_14d: { day: string; renders: number; chars: number }[];
+    top_keys: { key: string; renders: number; chars: number }[];
     by_voice: { voice: string; renders: number; chars: number }[];
     by_mode: { stream: number; batch: number };
     recent: { email: string; chars: number; voice: string; mode: string; status: string; at: string }[];
   };
+  funnel: {
+    visits: number; signups: number; activated: number; paid: number;
+    visit_to_signup: number; signup_to_activated: number; activated_to_paid: number;
+  };
   revenue: {
     kobo_total: number; paid_in_kobo: number; paystack_balance_kobo: number | null;
-    fulfilled: number; pending: number; failed: number;
+    fulfilled: number; pending: number; failed: number; avg_topup_kobo: number;
+    series_14d: { day: string; kobo: number; count: number }[];
     recent: { email: string; amount_kobo: number; status: string; reference: string; created_at: string }[];
   };
 }
@@ -111,7 +123,7 @@ export default function AdminPage() {
               {money(data.revenue.paid_in_kobo)}
             </p>
             <p className="mt-2 font-mono text-[11px] text-zinc-600">
-              {data.revenue.fulfilled} Paystack payments · {data.revenue.pending} pending · {data.revenue.failed} failed
+              {data.revenue.fulfilled} Paystack payments · {data.revenue.pending} pending · {data.revenue.failed} failed · avg {money(data.revenue.avg_topup_kobo)}
             </p>
           </div>
           <div className="border-t border-line bg-surface p-6 sm:border-l sm:border-t-0 sm:p-8">
@@ -129,10 +141,51 @@ export default function AdminPage() {
       </Card>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Users" value={compact(data.users.total)} sub={`+${data.users.new_7d} this week`} />
+        <Stat label="Users" value={compact(data.users.total)} sub={`+${data.users.new_7d} this week · ${data.users.dormant} dormant`} />
         <Stat label="Logins (7d)" value={compact(data.logins.last_7d)} sub={`${compact(data.logins.total)} all time`} />
         <Stat label="Visits (7d)" value={compact(data.visits.last_7d)} sub={`${compact(data.visits.total)} all time`} />
         <Stat label="Audio generated" value={`${data.renders.audio_hours}h`} sub={`${compact(data.renders.chars_total)} chars · ${data.renders.by_mode.stream} ws / ${data.renders.by_mode.batch} http`} />
+      </div>
+
+      {/* funnel: where strangers become paying users */}
+      <Card>
+        <CardHead title="Funnel" />
+        <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4">
+          {[
+            { label: "Visits", value: compact(data.funnel.visits), sub: "anonymous hits" },
+            { label: "Signups", value: compact(data.funnel.signups), sub: `${(data.funnel.visit_to_signup * 100).toFixed(1)}% of visits` },
+            { label: "Activated", value: compact(data.funnel.activated), sub: `${(data.funnel.signup_to_activated * 100).toFixed(1)}% of signups · ≥1 render` },
+            { label: "Paid", value: compact(data.funnel.paid), sub: `${(data.funnel.activated_to_paid * 100).toFixed(1)}% of activated · ≥1 payment` },
+          ].map((s) => (
+            <div key={s.label} className="bg-card p-4">
+              <SectionLabel>{s.label}</SectionLabel>
+              <p className="tabular mt-1.5 font-display text-2xl font-semibold">{s.value}</p>
+              <p className="mt-1 font-mono text-[11px] text-zinc-600">{s.sub}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Avg render" value={compact(data.renders.quality.avg_chars)} sub="chars per render" />
+        <Stat label="Render errors" value={compact(data.renders.quality.errors)} sub={`${(data.renders.quality.error_rate * 100).toFixed(1)}% failure rate`} />
+        <Stat label="Avg latency" value={`${compact(data.renders.quality.avg_latency_ms)}ms`} sub="time to first audio" />
+        <Stat label="Owed to users" value={compact(data.users.liability_chars)} sub="unspent wallet chars" />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHead title="Renders · 14 days" />
+          <div className="px-4 pb-2">
+            <Bars values={data.renders.series_14d.map((p) => p.renders)} labels={data.renders.series_14d.map((p) => dayLabel(p.day))} />
+          </div>
+        </Card>
+        <Card>
+          <CardHead title="Paid in · 14 days" />
+          <div className="px-4 pb-2">
+            <Bars values={data.revenue.series_14d.map((p) => p.kobo)} labels={data.revenue.series_14d.map((p) => dayLabel(p.day))} />
+          </div>
+        </Card>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -152,6 +205,37 @@ export default function AdminPage() {
           <div className="px-4 pb-2">
             <Bars values={data.logins.series_14d.map((p) => p.count)} labels={data.logins.series_14d.map((p) => dayLabel(p.day))} />
           </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHead title="Top users · by chars rendered" />
+          <ul className="divide-y divide-line">
+            {data.users.top.map((u) => (
+              <li key={u.email} className="flex items-center gap-4 px-5 py-3.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{u.email}</p>
+                  <p className="font-mono text-[11px] text-zinc-600">{u.renders} renders</p>
+                </div>
+                <Badge tone={u.paid ? "green" : "neutral"}>{u.paid ? "paid" : "free"}</Badge>
+                <span className="tabular shrink-0 font-mono text-[11px] text-zinc-500">{compact(u.chars)}</span>
+              </li>
+            ))}
+            {data.users.top.length === 0 && <li className="px-5 py-6 text-sm text-zinc-600">No renders yet.</li>}
+          </ul>
+        </Card>
+        <Card>
+          <CardHead title="Top keys · by renders" />
+          <ul className="divide-y divide-line">
+            {data.renders.top_keys.map((k) => (
+              <li key={k.key} className="flex items-center gap-4 px-5 py-3.5">
+                <span className="min-w-0 flex-1 truncate text-sm">{k.key}</span>
+                <span className="tabular shrink-0 font-mono text-[11px] text-zinc-500">{k.renders} renders · {compact(k.chars)}</span>
+              </li>
+            ))}
+            {data.renders.top_keys.length === 0 && <li className="px-5 py-6 text-sm text-zinc-600">No renders yet.</li>}
+          </ul>
         </Card>
       </div>
 
