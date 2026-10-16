@@ -1,0 +1,5 @@
+# Render (and pip) look for requirements.txt at the repo root by default.
+# This repo keeps per-lane files under server/ — this shim points at the
+# full (Piper) lane so manual deploys and auto-detect just work.
+# The render.yaml blueprint installs server/requirements-piper.txt directly.
+-r server/requirements-piper.txt
