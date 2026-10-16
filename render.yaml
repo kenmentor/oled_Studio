@@ -44,8 +44,13 @@ services:
         sync: false # Atlas connection string; without it the app runs on memory stores
       - key: TTS_VOICE_STORE
         value: mongo # memory fallback if Mongo is unreachable (data won't persist)
+      # No deployed console yet (dashboard runs locally): logins and
+      # Paystack returns land on the local dev server via browser redirects.
       - key: FRONTEND_URL
-        value: https://oled-studio-console.onrender.com
+        value: http://127.0.0.1:3001
+      # Explicit so GitHub sees this exact URL (must match the OAuth app).
+      - key: GITHUB_REDIRECT_URI
+        value: https://oled-studio.onrender.com/v1/auth/github/callback
 
   - type: web
     name: oled-studio-console
@@ -56,6 +61,6 @@ services:
     healthCheckPath: /
     envVars:
       - key: NEXT_PUBLIC_MIDDLEMAN_URL
-        value: https://oled-studio-api.onrender.com # your API's Render URL
+        value: https://oled-studio.onrender.com # backend API's Render URL
       - key: NODE_VERSION
         value: 22.10.0

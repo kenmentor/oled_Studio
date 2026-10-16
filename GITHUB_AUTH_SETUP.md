@@ -1,6 +1,23 @@
-# GitHub OAuth setup (local)
+# GitHub OAuth setup
 
-## 1. Register the app (browser, once)
+Live backend: `https://oled-studio.onrender.com` · local console: `http://127.0.0.1:3001`.
+GitHub must point at the RENDER URLs (it can't reach your laptop).
+
+## 0. Register the app for production (browser, once)
+
+1. GitHub avatar → **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**.
+   Direct link: `https://github.com/settings/applications/new`
+2. Fill in EXACTLY (byte-for-byte — GitHub rejects anything else):
+   - Application name: `OLED Studio`
+   - Homepage URL: `http://127.0.0.1:3001`
+   - Authorization callback URL: `https://oled-studio.onrender.com/v1/auth/github/callback`
+3. Copy the **Client ID** → Render API service env `GITHUB_CLIENT_ID`.
+4. **Generate a new client secret** → Render API service env `GITHUB_CLIENT_SECRET`.
+5. Render API service env must also have:
+   - `GITHUB_REDIRECT_URI=https://oled-studio.onrender.com/v1/auth/github/callback`
+   - `FRONTEND_URL=http://127.0.0.1:3001` (logins land on your local console)
+
+## 1. Register the app for local dev (browser, once)
 
 1. GitHub avatar → **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**.
    Direct link: `https://github.com/settings/applications/new`

@@ -75,6 +75,11 @@ def build_registry(provider: SynthesisProvider):
 
             registry = MongoVoiceRegistry()
             registry.all()  # fail fast if Mongo is down
+            # Seed the provider lineup on every boot (upsert: descriptive
+            # fields refresh, enabled toggles are preserved). Without this a
+            # fresh database has NO voices and every render 404s/unknowns.
+            for v in provider.voices():
+                registry.create(v)
             print("[server] voice store: mongo")
             return registry
         except Exception as e:  # noqa: BLE001 - dev fallback, never silent in prod logs

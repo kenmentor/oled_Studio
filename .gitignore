@@ -1,7 +1,9 @@
 .openocode/
 .env
+.env.*
 test.env
 server/.env
+*.local
 *.onnx
 *.onnx.json
 # deps + build output (never commit)
