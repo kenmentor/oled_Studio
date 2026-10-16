@@ -55,10 +55,11 @@ services:
       # /v1/users/me call 401s (overview -> kicked to signin).
       - key: SESSION_SAME_SITE
         value: none
-      # No deployed console yet (dashboard runs locally): logins and
-      # Paystack returns land on the local dev server via browser redirects.
+      # Where logins and Paystack returns land after leaving the API:
+      # the DEPLOYED console. (Local dev still works: the API is reachable
+      # from localhost, but post-login lands here, not on :3001.)
       - key: FRONTEND_URL
-        value: http://127.0.0.1:3001
+        value: https://oled-studio-1.onrender.com
       # Explicit so GitHub sees this exact URL (must match the OAuth app).
       - key: GITHUB_REDIRECT_URI
         value: https://oled-studio.onrender.com/v1/auth/github/callback
