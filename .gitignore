@@ -1,1 +1,17 @@
 .openocode/
+.env
+test.env
+server/.env
+*.onnx
+*.onnx.json
+# deps + build output (never commit)
+node_modules/
+.next/
+out/
+dist/
+# python caches + test artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+.DS_Store

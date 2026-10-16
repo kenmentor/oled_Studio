@@ -1,0 +1,31 @@
+# API image (FALLBACK — native Render Python is the primary path, see
+# RENDER_DEPLOY.md). Pinned to 3.11: piper-phonemize ships wheels only up
+# to cp311. Voices bake in at build time (scripts/download_models.py).
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY server/requirements-piper.txt ./server/requirements-piper.txt
+RUN pip install -r server/requirements-piper.txt
+
+COPY server ./server
+COPY scripts ./scripts
+
+# Bake voices into the image (skips files already present; never fatal).
+ARG TTS_VOICES="ada,tunde,musa,ngozi"
+ARG PIPER_VOICE_MAP="ada:en_US-lessac-medium,tunde:en_GB-alan-medium,musa:en_US-amy-medium,ngozi:en_GB-jenny_dioco-medium"
+ARG PIPER_MODELS_DIR="server/static/piper"
+ENV TTS_VOICES=${TTS_VOICES} \
+    PIPER_VOICE_MAP=${PIPER_VOICE_MAP} \
+    PIPER_MODELS_DIR=${PIPER_MODELS_DIR}
+RUN python scripts/download_models.py
+
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

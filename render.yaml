@@ -1,0 +1,57 @@
+# Render blueprint: backend API + dashboard console.
+# Apply: dashboard.render.com -> New -> Blueprint -> point at this repo.
+# After first deploy, wire the two services' URLs into each other (see
+# RENDER_DEPLOY.md) — Render only knows the URLs once they're created.
+
+services:
+  - type: web
+    name: oled-studio-api
+    runtime: python # native runtime is enough (see note below on Docker)
+    plan: free # demo-ok; starter+ recommended (RAM per voice, no sleep)
+    buildCommand: "pip install -r server/requirements-piper.txt && python scripts/download_models.py"
+    startCommand: "python -m uvicorn server.app:app --host 0.0.0.0 --port $PORT --workers 1"
+    healthCheckPath: /health
+    envVars:
+      # Python 3.11 ON PURPOSE: piper-phonemize ships wheels up to cp311
+      # (no 3.12/3.13 builds) — newer Pythons can't install it at all.
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: TTS_PROVIDER
+        value: piper
+      - key: TTS_VOICES
+        value: ada,tunde,musa,ngozi
+      # Stand-in voices until the Qwen checkpoint lands (Piper has no
+      # Nigerian-English models; these are close English stand-ins).
+      - key: PIPER_VOICE_MAP
+        value: ada:en_US-lessac-medium,tunde:en_GB-alan-medium,musa:en_US-amy-medium,ngozi:en_GB-jenny_dioco-medium
+      - key: PIPER_AUTO_DOWNLOAD
+        value: "true" # safety net if a build-time file goes missing
+      - key: PIPER_PRELOAD
+        value: "false" # boot fast, load each voice on first use (less idle RAM)
+      - key: REQUIRE_LOGIN
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true # 1Password-style: Render invents it, never in git
+      - key: GITHUB_CLIENT_ID
+        sync: false # fill in the Render dashboard (secret, not in git)
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: PAYSTACK_SECRET
+        sync: false # sk_test_... to start; live needs PAYSTACK_ALLOW_LIVE=true
+      - key: PAYSTACK_PUBLIC
+        sync: false
+      - key: FRONTEND_URL
+        value: https://oled-studio-console.onrender.com
+
+  - type: web
+    name: oled-studio-console
+    runtime: node
+    plan: starter
+    buildCommand: "npm install --prefix dashboard && npm run build --prefix dashboard"
+    startCommand: "npx --prefix dashboard next start -p $PORT"
+    healthCheckPath: /
+    envVars:
+      - key: NEXT_PUBLIC_MIDDLEMAN_URL
+        value: https://oled-studio-api.onrender.com # your API's Render URL
+      - key: NODE_VERSION
+        value: 22.10.0
