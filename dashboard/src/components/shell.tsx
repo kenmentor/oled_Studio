@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useAccount, compact, tokensMoney } from "@/lib/store";
+import { useAccount, compact, tokensMoney, BYPASS_AUTH } from "@/lib/store";
 import { asset, gateway, useServerBalance } from "@/lib/gateway";
 import { Meter } from "@/components/charts";
 import { Avatar } from "@/components/ui";
@@ -187,9 +187,10 @@ export default function Shell({ children }: { children: ReactNode }) {
 
   // Dead session with a live local account ("clean dashboard, no stats"):
   // drop the stale account and say so on the sign-in screen, instead of
-  // hanging on "connecting…" forever.
+  // hanging on "connecting…" forever. Skipped under the dev bypass, where
+  // 401s are expected (no session by design) and must never kick you out.
   useEffect(() => {
-    if (!account) return;
+    if (!account || BYPASS_AUTH) return;
     const onExpired = () => {
       signOut();
       router.replace("/signin?expired=1");

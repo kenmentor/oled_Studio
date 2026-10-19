@@ -19,6 +19,13 @@ import { gateway, noteAuthFailure, type ServerVoice } from "./gateway";
 
 const KEY = "oled.dashboard.v3";
 
+/* Local inspection hatch: NEXT_PUBLIC_BYPASS_AUTH=true (dashboard/.env.local,
+ * dev only — never set it in production) seeds a fake local account so
+ * every user page renders without signing in. Backend calls still go out
+ * for real: offline backends just show their connecting/empty states.
+ * Admin pages are NOT covered — they need a real session (see recipe). */
+export const BYPASS_AUTH = process.env.NEXT_PUBLIC_BYPASS_AUTH === "true";
+
 export type PlanId = "free" | "studio" | "scale";
 export interface Plan {
   id: PlanId;
@@ -211,7 +218,7 @@ function freshAccount(
   uid = "",
   avatar = "",
   company = "",
-  createdAt = ""
+  createdAt = "",
 ): Account {
   // Billing cycle starts at signup, not at the calendar month.
   const parsed = Date.parse(createdAt);
@@ -232,30 +239,58 @@ function freshAccount(
     defaultVoiceId: "",
     events: [],
     invoices: [],
-    payment: { brand: "visa", last4: "4242", expMonth: 11, expYear: new Date().getFullYear() + 2 },
+    payment: {
+      brand: "visa",
+      last4: "4242",
+      expMonth: 11,
+      expYear: new Date().getFullYear() + 2,
+    },
     members: [
-      { id: `m-${randomHex(3)}`, name, email, role: "owner", joinedAt: Date.now() },
+      {
+        id: `m-${randomHex(3)}`,
+        name,
+        email,
+        role: "owner",
+        joinedAt: Date.now(),
+      },
     ],
     webhooks: [],
-    prefs: { usageAlerts: true, quotaAlerts: true, invoices: true, product: false, quotaWarnAt: 80 },
+    prefs: {
+      usageAlerts: true,
+      quotaAlerts: true,
+      invoices: true,
+      product: false,
+      quotaWarnAt: 80,
+    },
   };
 }
 
 interface Ctx {
   account: Account | null;
   ready: boolean;
-  signIn: (name: string, email: string, uid?: string, avatar?: string, company?: string, createdAt?: string) => void;
+  signIn: (
+    name: string,
+    email: string,
+    uid?: string,
+    avatar?: string,
+    company?: string,
+    createdAt?: string,
+  ) => void;
   signOut: () => void;
-  updateProfile: (patch: Partial<Pick<Account, "name" | "email" | "company">>) => void;
-      createKey: (name: string) => Promise<{ key: ApiKey; secret: string }>;
-      revokeKey: (id: string) => Promise<void>;
-      refreshKeys: () => Promise<void>;
+  updateProfile: (
+    patch: Partial<Pick<Account, "name" | "email" | "company">>,
+  ) => void;
+  createKey: (name: string) => Promise<{ key: ApiKey; secret: string }>;
+  revokeKey: (id: string) => Promise<void>;
+  refreshKeys: () => Promise<void>;
   /** Server-bound secret for Studio renders. Returns an existing
    *  server-issued secret or provisions a fresh "Studio" key bound to
    *  this uid. Never returns an offline-only secret: money must debit
    *  the same wallet the dashboard displays. Null = backend unreachable. */
   ensureStudioSecret: () => Promise<string | null>;
-  addVoice: (v: Omit<Voice, "id" | "createdAt" | "builtIn"> & { enabled?: boolean }) => Promise<void>;
+  addVoice: (
+    v: Omit<Voice, "id" | "createdAt" | "builtIn"> & { enabled?: boolean },
+  ) => Promise<void>;
   deleteVoice: (id: string) => Promise<void>;
   setVoiceEnabled: (id: string, enabled: boolean) => Promise<void>;
   useVoice: (id: string) => void;
@@ -278,7 +313,11 @@ const AccountCtx = createContext<Ctx | null>(null);
 
 /* ---- backend voice sync: the server owns ids/labels/enabled ---- */
 
-async function postVoice(v: { id: string; label: string; accent: string }): Promise<boolean> {
+async function postVoice(v: {
+  id: string;
+  label: string;
+  accent: string;
+}): Promise<boolean> {
   try {
     const r = await fetch(`${gateway.base}/v1/voices`, {
       method: "POST",
@@ -305,7 +344,9 @@ async function patchVoice(id: string, enabled: boolean): Promise<void> {
 
 async function deleteVoiceOnServer(id: string): Promise<void> {
   try {
-    await fetch(`${gateway.base}/v1/voices/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await fetch(`${gateway.base}/v1/voices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   } catch {
     /* offline: local state still updates below */
   }
@@ -332,7 +373,11 @@ function mergeServerVoices(a: Account, server: ServerVoice[]): Account {
     voices.find((v) => v.id === a.defaultVoiceId && v.enabled) ??
     voices.find((v) => v.enabled) ??
     voices[0];
-  return { ...a, voices, defaultVoiceId: fallback ? fallback.id : a.defaultVoiceId };
+  return {
+    ...a,
+    voices,
+    defaultVoiceId: fallback ? fallback.id : a.defaultVoiceId,
+  };
 }
 
 export function AccountProvider({ children }: { children: ReactNode }) {
@@ -340,47 +385,60 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as Account;
-        saved.uid = saved.uid ?? "";
-        saved.avatar = saved.avatar ?? "";
-        saved.since = saved.since ?? "";
-        saved.voices = (saved.voices ?? []).map(({ enabled, ...voice }) => ({
-          ...voice,
-          enabled: enabled ?? true,
-        }));
-        setAccount(saved);
-        setReady(true);
-        // The stored uid may predate the server's database (e.g. created
-        // while TTS_VOICE_STORE=memory, now Mongo). A 404 means the user
-        // no longer exists: drop to signed-out so every call falls back
-        // to the persona instead of 404ing forever. Backend down (fetch
-        // throws) keeps local state — offline tolerance, not a logout.
-        if (saved.uid) {
-          fetch(`${gateway.base}/v1/users/me?user_id=${encodeURIComponent(saved.uid)}`, {
-            credentials: "include", // a live session rescues a stale uid (200)
-          })
-            .then((r) => {
-              if (r.status === 404) {
-                try {
-                  localStorage.removeItem(KEY);
-                } catch {
-                  /* ignore */
-                }
-                setAccount(null);
-              }
-            })
-            .catch(() => {});
-        }
-        return;
+    let cancelled = false;
+
+    async function initializeAccount() {
+      // Always discard the old dashboard blob.
+      try {
+        localStorage.removeItem(KEY);
+      } catch {
+        // Continue and try to initialize the account.
       }
-    } catch {
-      /* unreadable blob: start signed out rather than crash */
+
+      // Get the identity from the authenticated backend session.
+      // Do not trust old localStorage data as proof of identity.
+      try {
+        const me = await gateway.me();
+
+        if (cancelled) return;
+
+        if (!me?.id) {
+          setAccount(null);
+          setReady(true);
+          return;
+        }
+
+        const account = freshAccount(
+          me.name,
+          me.email,
+          me.id,
+          me.avatar_url ?? "",
+          me.company ?? "",
+          me.created_at ?? "",
+        );
+
+        try {
+          localStorage.setItem(KEY, JSON.stringify(account));
+        } catch {
+          // Keep the account in memory if storage fails.
+        }
+
+        setAccount(account);
+        setReady(true);
+      } catch {
+        if (cancelled) return;
+
+        // Do not restore the old or fake account if the backend fails.
+        setAccount(null);
+        setReady(true);
+      }
     }
-    setAccount(null);
-    setReady(true);
+
+    void initializeAccount();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const persist = useCallback((fn: (a: Account) => Account) => {
@@ -421,16 +479,26 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       } catch {
         /* unreadable blob: unfiltered list */
       }
-      const r = await fetch(`${gateway.base}/v1/keys${uid ? `?owner_id=${encodeURIComponent(uid)}` : ""}`, {
-        credentials: "include", // logged-in session scopes the list server-side
-      });
+      const r = await fetch(
+        `${gateway.base}/v1/keys${uid ? `?owner_id=${encodeURIComponent(uid)}` : ""}`,
+        {
+          credentials: "include", // logged-in session scopes the list server-side
+        },
+      );
       if (r.status === 401) {
         noteAuthFailure(401);
         return;
       }
       if (!r.ok) return;
       const body = (await r.json()) as {
-        keys: { id: string; name: string; prefix: string; last4: string; created_at: string; last_used_at: string | null }[];
+        keys: {
+          id: string;
+          name: string;
+          prefix: string;
+          last4: string;
+          created_at: string;
+          last_used_at: string | null;
+        }[];
       };
       persist((a) => {
         const secrets = new Map(a.keys.map((k) => [k.id, k.secret]));
@@ -464,7 +532,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           uid.trim(),
           avatar.trim(),
           company.trim(),
-          createdAt.trim()
+          createdAt.trim(),
         );
         write(next);
         void refreshVoices();
@@ -498,7 +566,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           if (r.status === 401) noteAuthFailure(401);
           if (r.ok) {
             const issued = (await r.json()) as {
-              key: { id: string; name: string; prefix: string; last4: string; created_at: string };
+              key: {
+                id: string;
+                name: string;
+                prefix: string;
+                last4: string;
+                created_at: string;
+              };
               secret: string;
             };
             const key: ApiKey = {
@@ -532,7 +606,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
       async revokeKey(id) {
         try {
-          await fetch(`${gateway.base}/v1/keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+          await fetch(`${gateway.base}/v1/keys/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
         } catch {
           /* offline: local state still updates below */
         }
@@ -542,7 +618,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       refreshKeys,
 
       async ensureStudioSecret() {
-        const live = account?.keys.find((k) => k.secret?.startsWith("oled_sk_live_"))?.secret;
+        const live = account?.keys.find((k) =>
+          k.secret?.startsWith("oled_sk_live_"),
+        )?.secret;
         if (live) return live;
         try {
           let owner = account?.uid ?? "";
@@ -561,7 +639,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           if (r.status === 401) noteAuthFailure(401);
           if (!r.ok) return null;
           const issued = (await r.json()) as {
-            key: { id: string; name: string; prefix: string; last4: string; created_at: string };
+            key: {
+              id: string;
+              name: string;
+              prefix: string;
+              last4: string;
+              created_at: string;
+            };
             secret: string;
           };
           if (!issued.secret?.startsWith("oled_sk_live_")) return null;
@@ -593,7 +677,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           createdAt: Date.now(),
           builtIn: false,
         };
-        persist((a) => ({ ...a, voices: [...a.voices, created], defaultVoiceId: created.id }));
+        persist((a) => ({
+          ...a,
+          voices: [...a.voices, created],
+          defaultVoiceId: created.id,
+        }));
       },
 
       async deleteVoice(id) {
@@ -611,10 +699,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       async setVoiceEnabled(id, enabled) {
         await patchVoice(id, enabled);
         persist((a) => {
-          const voices = a.voices.map((v) => (v.id === id ? { ...v, enabled } : v));
+          const voices = a.voices.map((v) =>
+            v.id === id ? { ...v, enabled } : v,
+          );
           const defaultVoiceId =
             !enabled && a.defaultVoiceId === id
-              ? (voices.find((v) => v.id !== id && v.enabled)?.id ?? a.defaultVoiceId)
+              ? (voices.find((v) => v.id !== id && v.enabled)?.id ??
+                a.defaultVoiceId)
               : a.defaultVoiceId;
           return { ...a, voices, defaultVoiceId };
         });
@@ -673,7 +764,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       },
 
       removeMember(id) {
-        persist((a) => ({ ...a, members: a.members.filter((m) => m.id !== id || m.role === "owner") }));
+        persist((a) => ({
+          ...a,
+          members: a.members.filter((m) => m.id !== id || m.role === "owner"),
+        }));
       },
 
       addWebhook(url, events) {
@@ -681,7 +775,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           ...a,
           webhooks: [
             ...a.webhooks,
-            { id: `wh-${randomHex(3)}`, url, events, enabled: true, lastDeliveryAt: null, failures: 0 },
+            {
+              id: `wh-${randomHex(3)}`,
+              url,
+              events,
+              enabled: true,
+              lastDeliveryAt: null,
+              failures: 0,
+            },
           ],
         }));
       },
@@ -689,12 +790,17 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       toggleWebhook(id) {
         persist((a) => ({
           ...a,
-          webhooks: a.webhooks.map((w) => (w.id === id ? { ...w, enabled: !w.enabled } : w)),
+          webhooks: a.webhooks.map((w) =>
+            w.id === id ? { ...w, enabled: !w.enabled } : w,
+          ),
         }));
       },
 
       deleteWebhook(id) {
-        persist((a) => ({ ...a, webhooks: a.webhooks.filter((w) => w.id !== id) }));
+        persist((a) => ({
+          ...a,
+          webhooks: a.webhooks.filter((w) => w.id !== id),
+        }));
       },
 
       resetDemo() {
@@ -704,7 +810,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         void refreshKeys();
       },
     }),
-    [account, persist, ready, refreshKeys, refreshVoices, write]
+    [account, persist, ready, refreshKeys, refreshVoices, write],
   );
 
   return <AccountCtx.Provider value={value}>{children}</AccountCtx.Provider>;
@@ -772,9 +878,14 @@ export function remainingChars(a: Account): number {
   return Math.max(0, PLANS[a.plan].quotaChars - spentChars(a));
 }
 
-export function usageByDay(a: Account): { day: number; chars: number; costKobo: number }[] {
+export function usageByDay(
+  a: Account,
+): { day: number; chars: number; costKobo: number }[] {
   const start = cycleStartOf(a);
-  const days = Math.max(1, Math.min(31, Math.round((Date.now() - start) / 86_400_000) + 1));
+  const days = Math.max(
+    1,
+    Math.min(31, Math.round((Date.now() - start) / 86_400_000) + 1),
+  );
   const buckets = new Map<number, { chars: number; costKobo: number }>();
   for (const e of cycleEvents(a)) {
     const day = Math.floor((e.at - start) / 86_400_000);
@@ -793,7 +904,8 @@ export function usageByDay(a: Account): { day: number; chars: number; costKobo: 
 /* ---- formatting ---- */
 
 /** Kobo in, naira out: 100 kobo = ₦1. */
-export function money(kobo: number): string {  const naira = kobo / 100;
+export function money(kobo: number): string {
+  const naira = kobo / 100;
   return naira.toLocaleString("en-NG", {
     style: "currency",
     currency: "NGN",
@@ -809,7 +921,8 @@ export function tokensMoney(tokens: number): string {
   return money(Math.round(tokens / 10));
 }
 
-export function compact(n: number): string {  if (n < 1000) return String(Math.round(n));
+export function compact(n: number): string {
+  if (n < 1000) return String(Math.round(n));
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
@@ -824,11 +937,17 @@ export function timeAgo(ts: number | null): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d ago`;
-  return new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return new Date(ts).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 export function dateLabel(ts: number): string {
-  return new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return new Date(ts).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 export function dateTime(ts: number): string {
